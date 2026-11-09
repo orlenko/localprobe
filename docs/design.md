@@ -29,31 +29,31 @@ Node 22, TypeScript, no runtime dependencies. It uses `node:http`, `node:https` 
 
 **Decide what not to touch.** These are listed as "not probed" with the reason:
 
-- Tunnels and forwards, which can carry a probe to a remote system: `ssh`, `kubectl`, `cloud-sql-proxy`, `aws`, `gcloud`, `socat`, and similar. The list cannot be complete, so the report prints every process it will probe before probing, and `--exclude PORT` is available.
+- Tunnels and forwards, which can carry a probe to a remote system: `ssh`, `kubectl`, `cloud-sql-proxy`, `aws`, `gcloud`, `socat`, and similar. The list cannot be complete, so `--list` shows the plan and sends nothing, and `--exclude PORT` is available. The kernel picks which socket answers, so if any process on a port is skipped, the whole port is.
 - Silent line-protocol services, identified by process name or port: Redis, Memcached, Postgres, MySQL, MongoDB. An HTTP request written into these is logged as an attack or misparsed.
 
 `--include PORT` overrides both for a named port.
 
-**Classify before writing.** Connect and wait briefly for a banner. A listener that speaks first (SMTP, IMAP, SSH) is recorded as `non-HTTP` and nothing is written to it. Other listeners get one HTTP request, then one TLS attempt if plain HTTP fails.
+**Classify before writing.** Connect and wait briefly for a banner. A listener that speaks first (SMTP, IMAP, SSH) is recorded as `non-HTTP` and nothing is written to it. Other listeners get one HTTP request, then one TLS attempt if plain HTTP fails or returns 400.
 
 **Report byte delivery.** Any non-HTTP listener on a port outside the Fetch bad-port list is reported as "a browser can deliver bytes here", since a page can send a controlled body to a line protocol.
 
-**Probe HTTP listeners.** No cookies or credentials. Fixed paths only: `/`, `/api`, `/health`, `/metrics`, `/openapi.json`, plus any `--path /foo`. All of these are GET or OPTIONS.
+**Probe HTTP listeners.** No cookies or credentials. Fixed paths only: `/`, `/api`, `/health`, `/metrics`, `/openapi.json`, plus any `--path PORT:/foo`. All of these are GET or OPTIONS. The preflight is sent even when `GET` returns 404.
 
-| Check | Request | Finding |
-| --- | --- | --- |
-| Open data | `GET`, valid `Host`, no `Origin` | Status, size, content type. This is what a `no-cors` request looks like. |
-| Origin guard (CORS mode) | `GET`, `Origin: https://evil.example`, `Sec-Fetch-Site: cross-site` | Rejected or served. Applies only to requests that carry `Origin`. |
-| CORS read | Same request | `Access-Control-Allow-Origin` is `*` or reflects the origin; credentials allowed |
-| Preflight | `OPTIONS`, asks for `PUT` and `content-type: application/json` | Write calls permitted cross-origin |
-| Rebinding | `GET`, `Host: evil.example` | Rejected or served |
+| Check                    | Request                                                             | Finding                                                                          |
+| ------------------------ | ------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Open data                | `GET`, valid `Host`, no `Origin`                                    | Status, size, content type. This is what a `no-cors` request looks like.         |
+| Origin guard (CORS mode) | `GET`, `Origin: https://evil.example`, `Sec-Fetch-Site: cross-site` | Rejected or served. Applies only to requests that carry `Origin`.                |
+| CORS read                | Same request                                                        | `Access-Control-Allow-Origin` is `*` or reflects the origin; credentials allowed |
+| Preflight                | `OPTIONS`, asks for `PUT` and `content-type: application/json`      | Write calls permitted cross-origin                                               |
+| Rebinding                | `GET`, `Host: evil.example`                                         | Rejected or served                                                               |
 
 Probes carry no cookies, so the report states that it cannot see what an ambient session cookie would add.
 
 **Opt-in checks.**
 
-- `--ws`: WebSocket upgrade with a hostile `Origin` on `/` and on each `--ws-path`, then close with no frames. A 101 is reported as "a hostile origin can open this socket". It is opt-in because connect handlers can run. When it is off, the report says WebSockets were not tested.
-- `--post-path /foo`: a cross-site `POST` with `text/plain` and an empty body to a path you name. You are asserting that path is safe to call.
+- `--ws`: WebSocket upgrade with a hostile `Origin` on `/` of every HTTP service, then close with no frames. `--ws-path PORT:/foo` does the same on one path of one service. A 101 is reported as "a hostile origin can open this socket". It is opt-in because connect handlers can run. When `--ws` is off, the report says so.
+- `--post-path PORT:/foo`: a cross-site `POST` with `text/plain` and an empty body to one path of one service. You are asserting that path is safe to call.
 
 **Report.** Terminal table by default, `--json` for machine use. Nothing is written to disk unless `--out FILE` is given.
 
@@ -89,10 +89,12 @@ Each result is joined with what the canary logged, using a run ID, by pasting th
 ## Verdicts
 
 - **Readable by any website**: a CORS read succeeds from a hostile origin.
+- **Cross-origin writes allowed**: a preflight permits `PUT` with a JSON content type from a hostile origin.
 - **Socket open to any website**: 101 with a hostile `Origin` (`--ws` only).
 - **Rebindable**: serves a hostile `Host`.
-- **Open to the network**: bound beyond loopback and serving `/` without credentials. Anyone on the network can connect, with no browser involved.
+- **Open to the network**: bound beyond loopback and serving any tested path without credentials. Anyone on the network can connect, with no browser involved.
 - **Browser can deliver bytes**: non-HTTP listener on a port browsers do not block.
+- **Incomplete**: a check got no response or an inconclusive one, the listener gave no HTTP response, or no tested path exists. The tool does not report a clean result from this.
 - **No exposure found on the tested paths** lists those paths. The tool never says "safe".
 
 A browser that blocks a `fetch` is reported as blocking that request type on that date and version. It is not reported as protecting the service.
@@ -115,9 +117,16 @@ Browser behaviour changes between releases, so the published matrix carries date
 
 TypeScript `strict`, Node 22, pnpm, Vitest, Biome. Page is plain HTML and JS with no build step. MIT license.
 
+## Known gaps
+
+- Ctrl-C during a scan with `--out` leaves an empty file, and a rerun with that name reports that it exists. Delete it and rerun. The file is reserved first so that a bad path fails before any probe is sent.
+- A server that answers a hostile `Host` with 404 but still sends the full page is reported as rejecting it. Telling these apart would mean comparing response bodies.
+- A `Readable by any website` finding can come from a 401, 403, or 5xx response, because CORS does not depend on status. The evidence line gives the status.
+- The tunnel list cannot be complete. Tools that run under an interpreter, such as `gcloud`, may appear as `Python`. Check `--list` first.
+
 ## Design review outcome
 
-Accepted: skip tunnels; banner-first classification; canary; Origin check relabelled as CORS-mode and `Sec-Fetch-Site` added; blind-write probe and "writable" verdict removed in favour of `--post-path`; script scraping removed; WebSocket probe made opt-in; no URL input on the page; plain-HTTP results marked not measured; Firefox added; top-level navigation added; no automated join between CLI and page.
+Accepted: skip tunnels; banner-first classification; canary; Origin check relabelled as CORS-mode and `Sec-Fetch-Site` added; blind-write probe and its "writable blind" verdict removed in favour of `--post-path`; script scraping removed; WebSocket probe made opt-in; no URL input on the page; plain-HTTP results marked not measured; Firefox added; top-level navigation added; no automated join between CLI and page.
 
 Not accepted, with reasons:
 
