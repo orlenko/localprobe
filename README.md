@@ -25,4 +25,18 @@ Exclude anything you don't want contacted, then scan:
 node src/cli.ts scan --ws --exclude 9000
 ```
 
-See `node src/cli.ts scan --help` for testing specific paths. The design is in [docs/design.md](docs/design.md).
+See `node src/cli.ts scan --help` for testing specific paths.
+
+## What your browser lets through
+
+The scan tests your services. The browser page tests your browser: which request types an ordinary HTTPS page can send to `127.0.0.1`, `localhost`, `[::1]` and `0.0.0.0`.
+
+Start the canary, a throwaway listener on port 47823 that logs each request, holds no data, and exits after 10 minutes:
+
+```sh
+node src/cli.ts canary
+```
+
+Then open <https://orlenko.github.io/localprobe/> and click Run. Paste the page output next to the canary log. The run ID in each request path lines them up.
+
+Measured results, with dates and browser versions, are in [docs/matrix.md](docs/matrix.md). The design is in [docs/design.md](docs/design.md).

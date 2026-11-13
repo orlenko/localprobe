@@ -13,6 +13,7 @@
 	},
 	"scripts": {
 		"scan": "node src/cli.ts scan",
+		"canary": "node src/cli.ts canary",
 		"test": "vitest run",
 		"typecheck": "tsc",
 		"lint": "biome check ."

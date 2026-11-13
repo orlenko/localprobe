@@ -2,10 +2,18 @@
 import { open, rm } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { type PortPath, parsePort, parsePortPath } from "./args.ts";
+import {
+	CANARY_PORT,
+	DEFAULT_MINUTES,
+	MAX_MINUTES,
+	parseMinutes,
+} from "./canary.ts";
+import { runCanary } from "./canaryServer.ts";
 import { renderPlan, renderReport, reportLimits } from "./report.ts";
 import { listListeners, type ScanOptions, scanListeners } from "./scan.ts";
 
 const USAGE = `Usage: localprobe scan [options]
+       localprobe canary [--minutes N]
 
 Tests what a hostile web page could reach on this machine's local servers.
 
@@ -19,6 +27,11 @@ Tests what a hostile web page could reach on this machine's local servers.
   --json                 Print JSON instead of a table
   --out FILE             Write JSON to a new FILE. Results describe your machine, so keep it private
   --help                 Show this help
+
+localprobe canary listens on 127.0.0.1 and [::1] port ${CANARY_PORT} for the browser page,
+logs each request it receives, holds no data, and exits after ${DEFAULT_MINUTES} minutes.
+
+  --minutes N            Stop after N minutes, up to ${MAX_MINUTES}
 `;
 
 function warnAboutUnknownPorts(
@@ -33,8 +46,30 @@ function warnAboutUnknownPorts(
 	}
 }
 
+async function canaryMain(args: string[]): Promise<void> {
+	const { values } = parseArgs({
+		args,
+		options: {
+			minutes: { type: "string", default: String(DEFAULT_MINUTES) },
+			help: { type: "boolean", default: false },
+		},
+	});
+	if (values.help) {
+		process.stdout.write(USAGE);
+		return;
+	}
+	await runCanary({
+		port: CANARY_PORT,
+		minutes: parseMinutes(values.minutes),
+		log: (line) => process.stdout.write(`${line}\n`),
+	});
+}
+
 async function main(): Promise<void> {
+	const args = process.argv.slice(2);
+	if (args[0] === "canary") return canaryMain(args.slice(1));
 	const { values, positionals } = parseArgs({
+		args,
 		allowPositionals: true,
 		options: {
 			list: { type: "boolean", default: false },

@@ -6,3 +6,4 @@ results/
 .env
 .env.*
 .DS_Store
+.playwright-mcp/

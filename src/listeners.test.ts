@@ -6,17 +6,17 @@ const SAMPLE = [
 	"cMy\\x20App",
 	"f11",
 	"tIPv4",
-	"n*:5000",
+	"n*:5500",
 	"f12",
 	"tIPv6",
-	"n*:5000",
+	"n*:5500",
 	"p200",
 	"cserver",
 	"f8",
 	"tIPv4",
-	"n127.0.0.1:7000",
+	"n127.0.0.1:7100",
 	"p300",
-	"cdrive",
+	"ccache",
 	"f30",
 	"tIPv6",
 	"n[::1]:8000",
@@ -64,9 +64,9 @@ describe("parseLsofFields", () => {
 
 	it("keeps a literal space in a process name", () => {
 		expect(
-			parseLsofFields("p1\ncGoogle Drive\nf1\ntIPv6\nn[::1]:80\n")[0]
+			parseLsofFields("p1\ncExample Sync\nf1\ntIPv6\nn[::1]:80\n")[0]
 				?.processes,
-		).toEqual(["Google Drive"]);
+		).toEqual(["Example Sync"]);
 	});
 
 	it("replaces decoded control characters", () => {

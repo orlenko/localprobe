@@ -63,7 +63,7 @@ describe("browserCanConnect", () => {
 	});
 
 	it("allows common alternatives that are not on the list", () => {
-		for (const port of [1025, 1143, 6379, 11211])
+		for (const port of [2525, 10143, 6379, 11211])
 			expect(browserCanConnect(port)).toBe(true);
 	});
 });

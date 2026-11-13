@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<link rel="icon" href="data:,">
+<title>localprobe: what can a web page reach on your machine?</title>
+<style>
+	body { font: 16px/1.5 system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; color: #1b1b1b; background: #fff; }
+	h1 { font-size: 1.6rem; }
+	h2 { font-size: 1.2rem; margin-top: 2rem; }
+	code, pre, textarea { font: 13px/1.4 ui-monospace, Menlo, monospace; }
+	pre { background: #f4f4f4; padding: .75rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+	button { font: inherit; padding: .3rem .9rem; }
+	input[type=text] { font: inherit; width: 100%; box-sizing: border-box; padding: .3rem; }
+	.note { color: #555; font-size: .92rem; }
+	.frames { position: absolute; left: -10000px; top: 0; width: 1px; height: 1px; overflow: hidden; }
+	@media (prefers-color-scheme: dark) {
+		body { color: #e6e6e6; background: #151515; }
+		pre { background: #222; }
+		.note { color: #aaa; }
+		a { color: #8ab4f8; }
+	}
+</style>
+</head>
+<body>
+<h1>What can a web page reach on your machine?</h1>
+
+<p>Any page you visit can run JavaScript that sends requests to <code>127.0.0.1</code> and <code>localhost</code>. The same-origin policy limits what it can read back, but the request can still arrive. This page measures what your browser lets through, from an ordinary HTTPS page, to a throwaway listener on your own machine.</p>
+
+<p>Nothing runs until you click. Results stay on this page and are never sent anywhere. The page has no analytics, loads nothing from other sites, and reads nothing from its URL.</p>
+
+<h2>1. Start the canary</h2>
+<p>The canary is a listener from the <a href="https://github.com/orlenko/localprobe">localprobe repository</a>. It runs on port 47823, logs each request it receives, holds no data, and exits after 10 minutes.</p>
+<pre>git clone https://github.com/orlenko/localprobe.git
+cd localprobe
+node src/cli.ts canary</pre>
+<p>Check that it is up: open <code>http://127.0.0.1:47823/</code> in a new tab. You should see "localprobe canary", and the canary should log a line. If it does not, no result below means anything.</p>
+
+<h2>2. Run the tests</h2>
+<p>The page sends each request type to four addresses for the same canary: <code>127.0.0.1</code>, <code>localhost</code>, <code>[::1]</code>, and <code>0.0.0.0</code>. Your browser may ask for permission to reach devices on your local network or apps on this device. Answer it either way, and note what you chose. A small window opens when you click and stays blank until the form test near the end. Leave it open. It closes itself.</p>
+<p><button id="run" type="button" disabled>Run</button></p>
+<pre id="out" aria-live="polite">Waiting for a click.</pre>
+<p><button id="copy" type="button" disabled>Copy output</button></p>
+<p class="note">Paste this output next to the canary's log. Every request path carries the run ID, and the expected list shows which lines should appear. A request that never arrived has no line. The page reports only what it saw. A <code>TypeError</code> covers a refused connection, mixed content, a denied permission, and a blocked port, and the request may have arrived in some of those cases. For the iframe and form tests, the page cannot see inside the other window. They count only if the canary's own page sends back a message. Otherwise they read "no signal; see canary log".</p>
+
+<h2>3. Your own services</h2>
+<p>Type up to 20 port numbers. The page sends <code>GET /</code> to <code>http://127.0.0.1:PORT/</code> for each, with no cookies, and reports the status and size if it could read the response, or "reachable" if the request completed but the response was hidden. A redirect is not followed when the page tries to read the response. If that fails, the page retries in no-cors mode, where browsers always follow redirects, so a service that redirects elsewhere sends your browser there. Response bodies are counted, never shown or kept.</p>
+<p><label for="ports">Ports, separated by spaces or commas</label><br><input id="ports" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="8000 8888"></p>
+<p><button id="own" type="button" disabled>Check these ports</button></p>
+<pre id="ownout" aria-live="polite"></pre>
+<p class="note">A response this page could read, any other website can read too, unless your browser treats the two pages differently. The <code>localprobe scan</code> command tests the services themselves: CORS, preflight, Host checks, and bind address.</p>
+
+<h2>4. Revoke the permission afterwards</h2>
+<p>If your browser asked and you allowed it, the grant belongs to the whole <code>https://orlenko.github.io</code> origin, which every GitHub Pages site under that account shares. Remove it when you are done.</p>
+<ul>
+	<li><b>Chrome and other Chromium browsers:</b> paste <code>chrome://settings/content/siteDetails?site=https%3A%2F%2Forlenko.github.io</code> into the address bar, then click <b>Reset permissions</b>, or set the local network entries back to "Ask".</li>
+	<li><b>Safari and Firefox:</b> if the browser asked, remove <code>orlenko.github.io</code> from the matching permission in the browser's website settings.</li>
+</ul>
+
+<h2>Limits</h2>
+<ul>
+	<li>This page is served over HTTPS. A hostile page can use plain HTTP, and browsers treat the two differently. Results for plain-HTTP pages are not measured.</li>
+	<li>The <code>0.0.0.0</code> row from an HTTPS page is likely blocked as mixed content before any local-network rule applies. The canary log shows whether anything arrived.</li>
+	<li>A browser that blocks a request type on this date and version does not make any service safe. Browser rules change between releases.</li>
+	<li>Measured results, with dates and versions, are in the <a href="https://github.com/orlenko/localprobe/blob/main/docs/matrix.md">matrix</a>. The design is in <a href="https://github.com/orlenko/localprobe/blob/main/docs/design.md">docs/design.md</a>.</li>
+</ul>
+
+<div class="frames" id="frames" aria-hidden="true"></div>
+
+<script>
+"use strict";
+(() => {
+	// A frame could overlay or drive this page, and GitHub Pages cannot send frame-ancestors.
+	let framed;
+	try { framed = window.top !== window.self; } catch (_e) { framed = true; }
+	if (framed) {
+		document.body.textContent = "localprobe does not run inside a frame. Open it directly.";
+		return;
+	}
+
+	const PORT = 47823;
+	const MARKER = "localprobe canary";
+	const HOSTS = [
+		{ key: "v4", host: "127.0.0.1" },
+		{ key: "localhost", host: "localhost" },
+		{ key: "v6", host: "[::1]" },
+		{ key: "any", host: "0.0.0.0" }
+	];
+	const TESTS = [
+		{ key: "nocors", label: "fetch no-cors", run: testNoCors },
+		{ key: "cors", label: "fetch cors", run: testCors },
+		{ key: "ws", label: "WebSocket", run: testWebSocket },
+		{ key: "iframe", label: "iframe navigation", run: testIframe },
+		{ key: "form", label: "form POST in popup", run: testForm }
+	];
+	const REQUEST_MS = 20000;
+	const MESSAGE_MS = 10000;
+	const PROMPT_NOTE = " (an unanswered permission prompt also looks like this)";
+	const MAX_PORTS = 20;
+	const BODY_CAP = 10 * 1024 * 1024;
+	const PERMISSIONS = ["loopback-network", "local-network", "local-network-access"];
+
+	const out = document.getElementById("out");
+	const runButton = document.getElementById("run");
+	const copyButton = document.getElementById("copy");
+	const ownButton = document.getElementById("own");
+	const portsInput = document.getElementById("ports");
+	const ownOut = document.getElementById("ownout");
+	const frames = document.getElementById("frames");
+
+	let runId = null;
+	const waiters = Object.create(null);
+
+	function sleep(ms) { return new Promise((resolve) => { setTimeout(resolve, ms); }); }
+
+	function newRunId() {
+		const bytes = new Uint8Array(4);
+		crypto.getRandomValues(bytes);
+		return Array.prototype.map.call(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+	}
+
+	function originOf(target) { return `http://${target.host}:${PORT}`; }
+	function pathOf(test, target) { return `/lp/${runId}/${test.key}-${target.key}`; }
+	function line(text) { out.textContent += `${text}\n`; }
+
+	function errorText(error) {
+		if (error && error.name === "TimeoutError") return `timed out after ${REQUEST_MS / 1000} s${PROMPT_NOTE}`;
+		if (error?.name) return error.name + (error.message ? `: ${error.message}` : "");
+		return String(error);
+	}
+
+	// The canary's page posts {canary, run, test}. Only a message from the expected origin with this run's ID counts.
+	window.addEventListener("message", (event) => {
+		const data = event.data;
+		if (data?.canary !== "localprobe" || data.run !== runId || typeof data.test !== "string") return;
+		const waiter = waiters[data.test];
+		if (!waiter || event.origin !== waiter.origin) return;
+		waiter.resolve(`canary page loaded and ran script (message from ${event.origin})`);
+	});
+
+	function waitForMessage(testKey, origin) {
+		return new Promise((resolve) => {
+			const timer = setTimeout(() => { finish(`no signal in ${MESSAGE_MS / 1000} s; see canary log${PROMPT_NOTE}`); }, MESSAGE_MS);
+			function finish(result) {
+				clearTimeout(timer);
+				delete waiters[testKey];
+				resolve(result);
+			}
+			waiters[testKey] = { origin: origin, resolve: finish };
+		});
+	}
+
+	async function testNoCors(test, target) {
+		try {
+			const response = await fetch(originOf(target) + pathOf(test, target), {
+				mode: "no-cors", credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(REQUEST_MS)
+			});
+			return response.type === "opaque" ? "completed, response hidden (opaque)" : `completed, type ${response.type}`;
+		} catch (error) {
+			return errorText(error);
+		}
+	}
+
+	async function testCors(test, target) {
+		try {
+			const response = await fetch(originOf(target) + pathOf(test, target), {
+				mode: "cors", credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(REQUEST_MS)
+			});
+			const text = await response.text();
+			return `read status ${response.status}, ${text.length} chars, canary marker ${text.indexOf(MARKER) >= 0 ? "present" : "absent"}`;
+		} catch (error) {
+			return errorText(error);
+		}
+	}
+
+	function testWebSocket(test, target) {
+		return new Promise((resolve) => {
+			let socket;
+			let opened = false;
+			const timer = setTimeout(() => {
+				done(opened ? `opened, no canary frame in ${REQUEST_MS / 1000} s` : `not opened in ${REQUEST_MS / 1000} s${PROMPT_NOTE}`);
+			}, REQUEST_MS);
+			function done(result) {
+				clearTimeout(timer);
+				try { socket.close(); } catch (_e) {}
+				resolve(result);
+			}
+			try {
+				socket = new WebSocket(`ws://${target.host}:${PORT}${pathOf(test, target)}`);
+			} catch (error) {
+				clearTimeout(timer);
+				resolve(`constructor threw ${errorText(error)}`);
+				return;
+			}
+			socket.onopen = () => { opened = true; };
+			socket.onmessage = (event) => {
+				done(`opened, canary frame ${event.data === MARKER ? "received" : "not recognised"}`);
+			};
+			socket.onclose = (event) => {
+				done(opened ? `opened, closed (${event.code}) before the canary frame` : `failed before opening (close ${event.code})`);
+			};
+		});
+	}
+
+	async function testIframe(test, target) {
+		const origin = originOf(target);
+		const message = waitForMessage(`${test.key}-${target.key}`, origin);
+		const frame = document.createElement("iframe");
+		frame.src = origin + pathOf(test, target);
+		frames.appendChild(frame);
+		const result = await message;
+		frame.remove();
+		return result;
+	}
+
+	// The popup is opened in the click handler, since only a user gesture may open one.
+	let popup = null;
+
+	async function popupDocument() {
+		try {
+			if (popup.document.readyState === "complete") return popup.document;
+		} catch (_e) {}
+		// The popup sits on another origin after a form test. about:blank brings it back to this one.
+		try { popup.location.href = "about:blank"; } catch (_e) {}
+		for (let i = 0; i < 50; i++) {
+			await sleep(100);
+			try {
+				if (popup.location.href === "about:blank" && popup.document.readyState === "complete") return popup.document;
+			} catch (_e) {}
+		}
+		return null;
+	}
+
+	async function testForm(test, target) {
+		if (!popup || popup.closed) return "popup blocked or closed, not sent";
+		const doc = await popupDocument();
+		if (!doc) return "popup did not return to about:blank, not sent";
+		const origin = originOf(target);
+		const message = waitForMessage(`${test.key}-${target.key}`, origin);
+		const form = doc.createElement("form");
+		form.method = "POST";
+		form.enctype = "text/plain";
+		form.action = origin + pathOf(test, target);
+		const input = doc.createElement("input");
+		input.type = "hidden";
+		input.name = "localprobe";
+		input.value = "1";
+		form.appendChild(input);
+		doc.body.textContent = "";
+		doc.body.appendChild(form);
+		let current = null;
+		try { current = popup.document; } catch (_e) {}
+		if (current !== doc) return "popup navigated away before submit, not sent";
+		form.submit();
+		return message;
+	}
+
+	async function permissionStates() {
+		if (!navigator.permissions?.query) return "permissions API unavailable";
+		const states = [];
+		for (let i = 0; i < PERMISSIONS.length; i++) {
+			const name = PERMISSIONS[i];
+			try {
+				const status = await navigator.permissions.query({ name: name });
+				states.push(`${name}=${status.state}`);
+			} catch (_e) {
+				states.push(`${name}=unsupported`);
+			}
+		}
+		return states.join(" ");
+	}
+
+	async function browserVersions() {
+		try {
+			if (navigator.userAgentData?.getHighEntropyValues) {
+				const values = await navigator.userAgentData.getHighEntropyValues(["fullVersionList", "platformVersion"]);
+				return values.fullVersionList.map((b) => `${b.brand} ${b.version}`).join(", ") +
+					"; platform " + values.platform + " " + values.platformVersion;
+			}
+		} catch (_e) {}
+		return "not available";
+	}
+
+	async function runAll() {
+		runId = newRunId();
+		out.textContent = "";
+		line(`localprobe page run ${runId}`);
+		line(`date: ${new Date().toISOString()}`);
+		line(`page: ${location.origin} (secure context: ${window.isSecureContext})`);
+		line(`user agent: ${navigator.userAgent}`);
+		line(`versions: ${await browserVersions()}`);
+		let lastStates = await permissionStates();
+		line(`permissions before: ${lastStates}`);
+		line(`canary port: ${PORT}`);
+		line("");
+		line("expected canary paths (a missing line means the request never arrived):");
+		TESTS.forEach((test) => {
+			HOSTS.forEach((target) => { line(`  ${pathOf(test, target)}`); });
+		});
+		line("");
+		line("results:");
+		for (let t = 0; t < TESTS.length; t++) {
+			for (let h = 0; h < HOSTS.length; h++) {
+				const test = TESTS[t];
+				const target = HOSTS[h];
+				const id = `${test.key}-${target.key}`;
+				const result = await test.run(test, target);
+				line(`  ${id.padEnd(16)} ${test.label.padEnd(19)} ${originOf(target).padEnd(24)} ${result}`);
+				const states = await permissionStates();
+				if (states !== lastStates) {
+					line(`  permissions now: ${states}`);
+					lastStates = states;
+				}
+			}
+		}
+		line("");
+		line(`permissions after: ${await permissionStates()}`);
+		line(`done ${new Date().toISOString()}`);
+	}
+
+	runButton.addEventListener("click", () => {
+		runButton.disabled = true;
+		copyButton.disabled = true;
+		popup = window.open("about:blank", "_blank", "popup,width=420,height=320");
+		runAll().catch((error) => {
+			line(`run stopped: ${errorText(error)}`);
+		}).finally(() => {
+			try { if (popup) popup.close(); } catch (_e) {}
+			popup = null;
+			runButton.disabled = false;
+			copyButton.disabled = false;
+		});
+	});
+
+	copyButton.addEventListener("click", () => {
+		navigator.clipboard.writeText(out.textContent).then(() => {
+			copyButton.textContent = "Copied";
+			setTimeout(() => { copyButton.textContent = "Copy output"; }, 1500);
+		}, () => {
+			copyButton.textContent = "Copy failed; select the text instead";
+		});
+	});
+
+	function parsePorts(text) {
+		const parts = text.split(/[\s,]+/).filter((part) => part !== "");
+		const ports = [];
+		for (let i = 0; i < parts.length; i++) {
+			if (!/^\d{1,5}$/.test(parts[i]) || Number(parts[i]) < 1 || Number(parts[i]) > 65535) {
+				return { error: `Not a port: ${parts[i]}` };
+			}
+			const port = Number(parts[i]);
+			if (ports.indexOf(port) < 0) ports.push(port);
+		}
+		if (ports.length === 0) return { error: "Type at least one port." };
+		if (ports.length > MAX_PORTS) return { error: `At most ${MAX_PORTS} ports.` };
+		return { ports: ports };
+	}
+
+	// Counts bytes and discards them. Stops at BODY_CAP.
+	async function bodySize(response) {
+		if (!response.body) return "no body";
+		const reader = response.body.getReader();
+		let total = 0;
+		for (;;) {
+			const chunk = await reader.read();
+			if (chunk.done) return `${total} bytes`;
+			total += chunk.value.byteLength;
+			if (total > BODY_CAP) {
+				reader.cancel().catch(() => {});
+				return `over ${BODY_CAP} bytes`;
+			}
+		}
+	}
+
+	async function checkPort(port) {
+		const url = `http://127.0.0.1:${port}/`;
+		let response;
+		try {
+			response = await fetch(url, {
+				mode: "cors", credentials: "omit", cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(REQUEST_MS)
+			});
+		} catch (corsError) {
+			try {
+				// Browsers allow only redirect: "follow" in no-cors mode.
+				await fetch(url, {
+					mode: "no-cors", credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(REQUEST_MS)
+				});
+				return `reachable, response hidden (cors read failed: ${errorText(corsError)})`;
+			} catch (error) {
+				return `not reached from this page: ${errorText(error)}`;
+			}
+		}
+		if (response.type === "opaqueredirect") return "redirect, not followed";
+		let size;
+		try {
+			size = await bodySize(response);
+		} catch (error) {
+			size = `body read failed: ${errorText(error)}`;
+		}
+		return `read by this page: status ${response.status}, ${size}`;
+	}
+
+	ownButton.addEventListener("click", async () => {
+		const parsed = parsePorts(portsInput.value);
+		if (parsed.error) {
+			ownOut.textContent = parsed.error;
+			return;
+		}
+		ownButton.disabled = true;
+		ownOut.textContent = `date: ${new Date().toISOString()}\n`;
+		try {
+			for (let i = 0; i < parsed.ports.length; i++) {
+				const port = parsed.ports[i];
+				ownOut.textContent += `${String(port).padEnd(6)} ${await checkPort(port)}\n`;
+			}
+		} finally {
+			ownButton.disabled = false;
+		}
+	});
+
+	runButton.disabled = false;
+	ownButton.disabled = false;
+})();
+</script>
+</body>
+</html>
