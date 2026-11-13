@@ -151,17 +151,35 @@ export function formatArrival(arrival: Arrival): string {
 
 export interface Unparsed {
 	time: Date;
+	/** When the TCP connection was accepted. Lets an IDLE line logged a minute later be placed in the run. */
+	opened: Date;
 	localAddress: string;
 	family: string;
 	reason: string;
 }
 
-/** A connection whose request Node could not parse. It still gets a line, so absence stays meaningful. */
+/** Reason given for a connection that closed before sending any request. */
+export const CLOSED_WITHOUT_REQUEST = "CLOSED_WITHOUT_REQUEST";
+
+function unparsedKind(reason: string): string {
+	if (reason === "ERR_HTTP_REQUEST_TIMEOUT") return "IDLE";
+	if (reason === CLOSED_WITHOUT_REQUEST) return "EMPTY";
+	if (reason.startsWith("HPE_")) return "UNPARSED";
+	return "DROPPED";
+}
+
+/**
+ * A connection that produced no request the canary could log. It still gets a line, so a
+ * missing line means no TCP connection arrived. IDLE: no complete request within Node's
+ * header timeout. EMPTY: closed before sending a request. UNPARSED: the bytes were not a
+ * valid request. DROPPED: any other socket error, such as a reset.
+ */
 export function formatUnparsed(unparsed: Unparsed): string {
 	return [
 		unparsed.time.toISOString(),
 		`local=${escapeField(unparsed.localAddress)}/${escapeField(unparsed.family)}`,
-		"UNPARSED",
+		unparsedKind(unparsed.reason),
+		`opened=${unparsed.opened.toISOString()}`,
 		`reason=${escapeField(unparsed.reason)}`,
 	].join(" ");
 }

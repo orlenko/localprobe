@@ -62,7 +62,8 @@ node src/cli.ts canary</pre>
 <h2>Limits</h2>
 <ul>
 	<li>This page is served over HTTPS. A hostile page can use plain HTTP, and browsers treat the two differently. Results for plain-HTTP pages are not measured.</li>
-	<li>The <code>0.0.0.0</code> row from an HTTPS page is likely blocked as mixed content before any local-network rule applies. The canary log shows whether anything arrived.</li>
+	<li>Chrome flags <code>0.0.0.0</code> requests from an HTTPS page as mixed content. In the dated runs they still arrived when the permission was granted. The canary log shows whether anything arrived.</li>
+	<li>The canary logs TCP connections that send no request (<code>IDLE</code>, <code>EMPTY</code>), with the time each opened. A browser can connect to a port without sending a request.</li>
 	<li>A browser that blocks a request type on this date and version does not make any service safe. Browser rules change between releases.</li>
 	<li>Measured results, with dates and versions, are in the <a href="https://github.com/orlenko/localprobe/blob/main/docs/matrix.md">matrix</a>. The design is in <a href="https://github.com/orlenko/localprobe/blob/main/docs/design.md">docs/design.md</a>.</li>
 </ul>

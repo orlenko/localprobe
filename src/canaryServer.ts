@@ -5,6 +5,7 @@ import {
 	CANARY_CSP,
 	CANARY_HTML,
 	CANARY_MARKER,
+	CLOSED_WITHOUT_REQUEST,
 	CORS_HEADERS,
 	closeFrame,
 	formatArrival,
@@ -85,10 +86,39 @@ function handleUpgrade(request: IncomingMessage, socket: Socket): void {
 	setTimeout(() => socket.destroy(), 2000).unref();
 }
 
+interface ConnectionState {
+	opened: Date;
+	/** Read at accept time, because a closed socket no longer reports it. */
+	localAddress: string;
+	family: string;
+	/** True once any line names this connection. */
+	logged: boolean;
+}
+
 function createCanaryServer(log: (line: string) => void): Server {
+	const connections = new WeakMap<Socket, ConnectionState>();
+	const markLogged = (socket: Socket) => {
+		const state = connections.get(socket);
+		if (state) state.logged = true;
+	};
+	const logUnparsed = (socket: Socket, reason: string) => {
+		const state = connections.get(socket);
+		log(
+			formatUnparsed({
+				time: new Date(),
+				opened: state?.opened ?? new Date(),
+				localAddress: state?.localAddress ?? socket.localAddress ?? "?",
+				family: state?.family ?? socket.localFamily ?? "?",
+				reason,
+			}),
+		);
+		markLogged(socket);
+	};
+
 	const server = createServer(
 		{ maxHeaderSize: MAX_HEADER_BYTES },
 		(request, response) => {
+			markLogged(request.socket);
 			log(formatArrival(arrivalOf(request)));
 			request.resume();
 			if (request.method === "OPTIONS") {
@@ -105,23 +135,30 @@ function createCanaryServer(log: (line: string) => void): Server {
 			response.end(request.method === "HEAD" ? undefined : CANARY_HTML);
 		},
 	);
+	// Every TCP connection gets at least one line, so a missing line means nothing connected.
+	server.on("connection", (socket: Socket) => {
+		connections.set(socket, {
+			opened: new Date(),
+			localAddress: socket.localAddress ?? "?",
+			family: socket.localFamily ?? "?",
+			logged: false,
+		});
+		socket.once("close", () => {
+			if (connections.get(socket)?.logged === false)
+				logUnparsed(socket, CLOSED_WITHOUT_REQUEST);
+		});
+	});
 	server.on("upgrade", (request: IncomingMessage, socket: Socket) => {
+		markLogged(socket);
 		log(formatArrival(arrivalOf(request)));
 		handleUpgrade(request, socket);
 	});
-	// Every arrival gets a line, so a missing line always means nothing arrived.
 	server.on("clientError", (error: NodeJS.ErrnoException, socket: Socket) => {
-		log(
-			formatUnparsed({
-				time: new Date(),
-				localAddress: socket.localAddress ?? "?",
-				family: socket.localFamily ?? "?",
-				reason: error.code ?? error.message,
-			}),
-		);
+		logUnparsed(socket, error.code ?? error.message);
 		socket.destroy();
 	});
 	server.on("connect", (request: IncomingMessage, socket: Socket) => {
+		markLogged(socket);
 		log(formatArrival(arrivalOf(request)));
 		socket.on("error", () => {});
 		socket.end(

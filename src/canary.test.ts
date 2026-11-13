@@ -4,6 +4,7 @@ import {
 	CANARY_CSP,
 	CANARY_HTML,
 	CANARY_MARKER,
+	CLOSED_WITHOUT_REQUEST,
 	CORS_HEADERS,
 	closeFrame,
 	escapeField,
@@ -177,16 +178,37 @@ describe("canary page", () => {
 });
 
 describe("formatUnparsed", () => {
-	it("logs a connection whose request could not be parsed", () => {
+	const opened = new Date("2026-01-02T03:03:00.000Z");
+
+	it("logs when the connection opened", () => {
 		expect(
 			formatUnparsed({
 				time: base.time,
+				opened,
 				localAddress: "::1",
 				family: "IPv6",
 				reason: "HPE_HEADER_OVERFLOW",
 			}),
 		).toBe(
-			"2026-01-02T03:04:05.000Z local=::1/IPv6 UNPARSED reason=HPE_HEADER_OVERFLOW",
+			"2026-01-02T03:04:05.000Z local=::1/IPv6 UNPARSED opened=2026-01-02T03:03:00.000Z reason=HPE_HEADER_OVERFLOW",
 		);
+	});
+
+	it.each([
+		["ERR_HTTP_REQUEST_TIMEOUT", "IDLE"],
+		[CLOSED_WITHOUT_REQUEST, "EMPTY"],
+		["HPE_INVALID_METHOD", "UNPARSED"],
+		["ECONNRESET", "DROPPED"],
+		["EPIPE", "DROPPED"],
+	])("labels %s as %s", (reason, kind) => {
+		expect(
+			formatUnparsed({
+				time: base.time,
+				opened,
+				localAddress: "127.0.0.1",
+				family: "IPv4",
+				reason,
+			}),
+		).toContain(` ${kind} opened=`);
 	});
 });
