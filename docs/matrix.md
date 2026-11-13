@@ -65,7 +65,7 @@ In P3 the twelve fetch and WebSocket rows and the iframe row to 127.0.0.1 ran wi
 1. Start the canary: `node src/cli.ts canary`. Open `http://127.0.0.1:47823/` in a tab and check that the canary logs a line.
 2. Reset the site's permission first, so the browser asks. In Chrome, paste `chrome://settings/content/siteDetails?site=https%3A%2F%2Forlenko.github.io` into the address bar and click Reset permissions.
 3. Open the page, click Run, and answer the prompt the way the column says. Leave the small window open.
-4. Copy the page output, and the canary lines that carry the run ID.
+4. Open "Details for pasting" on the page and copy it, and the canary lines that carry the run ID.
 5. Wait 90 seconds after the run ends. Then copy every `IDLE`, `EMPTY`, `UNPARSED` and `DROPPED` line whose `opened=` time falls inside the run. An `IDLE` line appears 60 to 90 seconds after its connection opened. Leave at least 90 seconds between runs.
 6. For each row, note the page result, whether the canary logged the path, and whether a connection opened at that row's time. Record the browser version from the output header, and the date.
 7. Reset the permission again when done.

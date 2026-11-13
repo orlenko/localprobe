@@ -15,6 +15,24 @@
 	button { font: inherit; padding: .3rem .9rem; }
 	input[type=text] { font: inherit; width: 100%; box-sizing: border-box; padding: .3rem; }
 	.note { color: #555; font-size: .92rem; }
+	.summary { margin: 1rem 0; }
+	.summary ul { list-style: none; padding: 0; margin: .5rem 0; }
+	.summary li { margin: .25rem 0; }
+	.verdict { display: inline-block; min-width: 5.5rem; font-weight: 600; }
+	.warn { border-left: 4px solid #b26a00; padding: .25rem .75rem; background: #fff6e5; }
+	table.grid { border-collapse: collapse; margin: .5rem 0 1rem; font-size: .92rem; width: 100%; }
+	table.grid th, table.grid td { border: 1px solid #ccc; padding: .3rem .5rem; text-align: left; }
+	table.grid th[scope=row] { font-weight: normal; white-space: nowrap; }
+	.k-read, .k-reached { background: #fde2e1; }
+	.k-blocked { background: #e3f4e3; }
+	.k-timeout, .k-nosignal, .k-notsent, .k-pending { background: #eee; }
+	@media (prefers-color-scheme: dark) {
+		.warn { background: #3a2a00; }
+		table.grid th, table.grid td { border-color: #444; }
+		.k-read, .k-reached { background: #4a1f1f; }
+		.k-blocked { background: #1f3a1f; }
+		.k-timeout, .k-nosignal, .k-notsent, .k-pending { background: #2a2a2a; }
+	}
 	.frames { position: absolute; left: -10000px; top: 0; width: 1px; height: 1px; overflow: hidden; }
 	@media (prefers-color-scheme: dark) {
 		body { color: #e6e6e6; background: #151515; }
@@ -39,11 +57,16 @@ node src/cli.ts canary</pre>
 <p>Check that it is up: open <code>http://127.0.0.1:47823/</code> in a new tab. You should see "localprobe canary", and the canary should log a line. If it does not, no result below means anything.</p>
 
 <h2>2. Run the tests</h2>
-<p>The page sends each request type to four addresses for the same canary: <code>127.0.0.1</code>, <code>localhost</code>, <code>[::1]</code>, and <code>0.0.0.0</code>. Your browser may ask for permission to reach devices on your local network or apps on this device. Answer it either way, and note what you chose. A small window opens when you click and stays blank until the form test near the end. Leave it open. It closes itself.</p>
+<p>The page sends each request type to four addresses for the same canary: <code>127.0.0.1</code>, <code>localhost</code>, <code>[::1]</code>, and <code>0.0.0.0</code>. Your browser may ask for permission to reach devices on your local network or apps on this device. Answer it either way, and note what you chose. A small window opens when you click and stays blank until the form test near the end. Leave it open. It closes itself. If it shows "Form is not secure", you have 10 seconds to choose: sending counts as loaded, and ignoring it counts as no signal.</p>
 <p><button id="run" type="button" disabled>Run</button></p>
-<pre id="out" aria-live="polite">Waiting for a click.</pre>
-<p><button id="copy" type="button" disabled>Copy output</button></p>
+<p id="status" class="note" aria-live="polite"></p>
+<div id="summary" class="summary"></div>
+<details id="details">
+<summary>Details for pasting next to the canary log</summary>
+<pre id="out">Waiting for a click.</pre>
+<p><button id="copy" type="button" disabled>Copy details</button></p>
 <p class="note">Paste this output next to the canary's log. Every request path carries the run ID, and the expected list shows which lines should appear. A request that never arrived has no line. The page reports only what it saw. A <code>TypeError</code> covers a refused connection, mixed content, a denied permission, and a blocked port, and the request may have arrived in some of those cases. For the iframe and form tests, the page cannot see inside the other window. They count only if the canary's own page sends back a message. Otherwise they read "no signal; see canary log".</p>
+</details>
 
 <h2>3. Your own services</h2>
 <p>Type up to 20 port numbers. The page sends <code>GET /</code> to <code>http://127.0.0.1:PORT/</code> for each, with no cookies, and reports the status and size if it could read the response, or "reachable" if the request completed but the response was hidden. A redirect is not followed when the page tries to read the response. If that fails, the page retries in no-cors mode, where browsers always follow redirects, so a service that redirects elsewhere sends your browser there. Response bodies are counted, never shown or kept.</p>
@@ -90,8 +113,8 @@ node src/cli.ts canary</pre>
 		{ key: "any", host: "0.0.0.0" }
 	];
 	const TESTS = [
-		{ key: "nocors", label: "fetch no-cors", run: testNoCors },
 		{ key: "cors", label: "fetch cors", run: testCors },
+		{ key: "nocors", label: "fetch no-cors", run: testNoCors },
 		{ key: "ws", label: "WebSocket", run: testWebSocket },
 		{ key: "iframe", label: "iframe navigation", run: testIframe },
 		{ key: "form", label: "form POST in popup", run: testForm }
@@ -102,6 +125,22 @@ node src/cli.ts canary</pre>
 	const MAX_PORTS = 20;
 	const BODY_CAP = 10 * 1024 * 1024;
 	const PERMISSIONS = ["loopback-network", "local-network", "local-network-access"];
+	// What a website could do, in the words the summary uses, per test.
+	const CAPABILITY = {
+		cors: "read responses from local servers that allow it",
+		nocors: "send requests that local servers answer",
+		ws: "open WebSocket connections to local servers",
+		iframe: "load local pages in a hidden frame",
+		form: "submit forms to local servers"
+	};
+	const REACHED_LABEL = { cors: "readable", nocors: "reached", ws: "opened", iframe: "loaded", form: "loaded" };
+	const KIND_LABEL = {
+		blocked: "blocked",
+		timeout: "no answer",
+		nosignal: "no signal",
+		notsent: "not sent",
+		pending: "..."
+	};
 
 	const out = document.getElementById("out");
 	const runButton = document.getElementById("run");
@@ -110,6 +149,8 @@ node src/cli.ts canary</pre>
 	const portsInput = document.getElementById("ports");
 	const ownOut = document.getElementById("ownout");
 	const frames = document.getElementById("frames");
+	const summaryBox = document.getElementById("summary");
+	const statusLine = document.getElementById("status");
 
 	let runId = null;
 	const waiters = Object.create(null);
@@ -126,6 +167,10 @@ node src/cli.ts canary</pre>
 	function pathOf(test, target) { return `/lp/${runId}/${test.key}-${target.key}`; }
 	function line(text) { out.textContent += `${text}\n`; }
 
+	// kind: read | reached | blocked | timeout | nosignal | notsent. text goes to the details log.
+	function result(kind, text) { return { kind: kind, text: text }; }
+	function failure(error) { return result(error && error.name === "TimeoutError" ? "timeout" : "blocked", errorText(error)); }
+
 	function errorText(error) {
 		if (error && error.name === "TimeoutError") return `timed out after ${REQUEST_MS / 1000} s${PROMPT_NOTE}`;
 		if (error?.name) return error.name + (error.message ? `: ${error.message}` : "");
@@ -138,16 +183,16 @@ node src/cli.ts canary</pre>
 		if (data?.canary !== "localprobe" || data.run !== runId || typeof data.test !== "string") return;
 		const waiter = waiters[data.test];
 		if (!waiter || event.origin !== waiter.origin) return;
-		waiter.resolve(`canary page loaded and ran script (message from ${event.origin})`);
+		waiter.resolve(result("reached", `canary page loaded and ran script (message from ${event.origin})`));
 	});
 
 	function waitForMessage(testKey, origin) {
 		return new Promise((resolve) => {
-			const timer = setTimeout(() => { finish(`no signal in ${MESSAGE_MS / 1000} s; see canary log${PROMPT_NOTE}`); }, MESSAGE_MS);
-			function finish(result) {
+			const timer = setTimeout(() => { finish(result("nosignal", `no signal in ${MESSAGE_MS / 1000} s; see canary log${PROMPT_NOTE}`)); }, MESSAGE_MS);
+			function finish(outcome) {
 				clearTimeout(timer);
 				delete waiters[testKey];
-				resolve(result);
+				resolve(outcome);
 			}
 			waiters[testKey] = { origin: origin, resolve: finish };
 		});
@@ -158,9 +203,9 @@ node src/cli.ts canary</pre>
 			const response = await fetch(originOf(target) + pathOf(test, target), {
 				mode: "no-cors", credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(REQUEST_MS)
 			});
-			return response.type === "opaque" ? "completed, response hidden (opaque)" : `completed, type ${response.type}`;
+			return result("reached", response.type === "opaque" ? "completed, response hidden (opaque)" : `completed, type ${response.type}`);
 		} catch (error) {
-			return errorText(error);
+			return failure(error);
 		}
 	}
 
@@ -170,9 +215,9 @@ node src/cli.ts canary</pre>
 				mode: "cors", credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(REQUEST_MS)
 			});
 			const text = await response.text();
-			return `read status ${response.status}, ${text.length} chars, canary marker ${text.indexOf(MARKER) >= 0 ? "present" : "absent"}`;
+			return result("read", `read status ${response.status}, ${text.length} chars, canary marker ${text.indexOf(MARKER) >= 0 ? "present" : "absent"}`);
 		} catch (error) {
-			return errorText(error);
+			return failure(error);
 		}
 	}
 
@@ -181,26 +226,26 @@ node src/cli.ts canary</pre>
 			let socket;
 			let opened = false;
 			const timer = setTimeout(() => {
-				done(opened ? `opened, no canary frame in ${REQUEST_MS / 1000} s` : `not opened in ${REQUEST_MS / 1000} s${PROMPT_NOTE}`);
+				done(opened ? result("reached", `opened, no canary frame in ${REQUEST_MS / 1000} s`) : result("timeout", `not opened in ${REQUEST_MS / 1000} s${PROMPT_NOTE}`));
 			}, REQUEST_MS);
-			function done(result) {
+			function done(outcome) {
 				clearTimeout(timer);
 				try { socket.close(); } catch (_e) {}
-				resolve(result);
+				resolve(outcome);
 			}
 			try {
 				socket = new WebSocket(`ws://${target.host}:${PORT}${pathOf(test, target)}`);
 			} catch (error) {
 				clearTimeout(timer);
-				resolve(`constructor threw ${errorText(error)}`);
+				resolve(result("blocked", `constructor threw ${errorText(error)}`));
 				return;
 			}
 			socket.onopen = () => { opened = true; };
 			socket.onmessage = (event) => {
-				done(`opened, canary frame ${event.data === MARKER ? "received" : "not recognised"}`);
+				done(result("reached", `opened, canary frame ${event.data === MARKER ? "received" : "not recognised"}`));
 			};
 			socket.onclose = (event) => {
-				done(opened ? `opened, closed (${event.code}) before the canary frame` : `failed before opening (close ${event.code})`);
+				done(opened ? result("reached", `opened, closed (${event.code}) before the canary frame`) : result("blocked", `failed before opening (close ${event.code})`));
 			};
 		});
 	}
@@ -211,9 +256,9 @@ node src/cli.ts canary</pre>
 		const frame = document.createElement("iframe");
 		frame.src = origin + pathOf(test, target);
 		frames.appendChild(frame);
-		const result = await message;
+		const outcome = await message;
 		frame.remove();
-		return result;
+		return outcome;
 	}
 
 	// The popup is opened in the click handler, since only a user gesture may open one.
@@ -235,9 +280,9 @@ node src/cli.ts canary</pre>
 	}
 
 	async function testForm(test, target) {
-		if (!popup || popup.closed) return "popup blocked or closed, not sent";
+		if (!popup || popup.closed) return result("notsent", "popup blocked or closed, not sent");
 		const doc = await popupDocument();
-		if (!doc) return "popup did not return to about:blank, not sent";
+		if (!doc) return result("notsent", "popup did not return to about:blank, not sent");
 		const origin = originOf(target);
 		const message = waitForMessage(`${test.key}-${target.key}`, origin);
 		const form = doc.createElement("form");
@@ -253,7 +298,7 @@ node src/cli.ts canary</pre>
 		doc.body.appendChild(form);
 		let current = null;
 		try { current = popup.document; } catch (_e) {}
-		if (current !== doc) return "popup navigated away before submit, not sent";
+		if (current !== doc) return result("notsent", "popup navigated away before submit, not sent");
 		form.submit();
 		return message;
 	}
@@ -284,6 +329,114 @@ node src/cli.ts canary</pre>
 		return "not available";
 	}
 
+	function element(tag, text, className) {
+		const node = document.createElement(tag);
+		if (text !== undefined) node.textContent = text;
+		if (className) node.className = className;
+		return node;
+	}
+
+	function isThrough(kind) { return kind === "read" || kind === "reached"; }
+
+	function cellLabel(testKey, kind) { return isThrough(kind) ? REACHED_LABEL[testKey] : KIND_LABEL[kind]; }
+
+	// One line per test: YES if any address got through, NO if all were blocked, otherwise UNCLEAR.
+	function verdict(test, row) {
+		const through = HOSTS.filter((target) => isThrough(row[target.key]));
+		const kinds = HOSTS.map((target) => row[target.key]);
+		if (through.length > 0) {
+			const where = through.length === HOSTS.length ? "all four addresses" : through.map((target) => target.host).join(", ");
+			return { word: "YES", detail: where };
+		}
+		if (kinds.every((kind) => kind === "blocked")) return { word: "NO", detail: "blocked at all four addresses" };
+		if (kinds.indexOf("timeout") >= 0) return { word: "UNCLEAR", detail: "the browser kept these waiting, often for an answer to its prompt" };
+		if (kinds.indexOf("nosignal") < 0) return { word: "UNCLEAR", detail: "not sent: the small window was blocked or closed" };
+		return { word: "UNCLEAR", detail: "no signal came back; the canary log shows whether anything arrived" };
+	}
+
+	function loopbackState(states) {
+		const known = "(granted|denied|prompt)";
+		const match =
+			new RegExp(`(?:^| )loopback-network=${known}`).exec(states || "") ||
+			new RegExp(`(?:^| )local-network-access=${known}`).exec(states || "");
+		return match ? match[1] : "unknown";
+	}
+
+	function renderSummary(results, permissionsAfter) {
+		const finished = permissionsAfter !== null;
+		summaryBox.textContent = "";
+		const allKinds = [];
+		TESTS.forEach((test) => { HOSTS.forEach((target) => { allKinds.push(results[test.key][target.key]); }); });
+
+		const nothingThrough = finished && !allKinds.some(isThrough);
+		if (nothingThrough) {
+			summaryBox.appendChild(element("p", "Nothing got through. Either your browser blocked every request, or the canary is not running. To tell which, open http://127.0.0.1:47823/ in a new tab: if it shows \"localprobe canary\", the canary is up and your browser blocked these requests.", "warn"));
+		}
+		// The permission belongs to this site, so the heading names whose requests these are.
+		const state = loopbackState(permissionsAfter || "");
+		const who = {
+			granted: "a website you have allowed to reach local servers",
+			denied: "a website you have blocked from local servers",
+			prompt: "a website you have not answered yet"
+		}[state] || "a website you visit";
+		let heading = `In this browser, right now, ${who} can:`;
+		if (!finished) heading = "Running. So far, in this browser, this page can:";
+		else if (nothingThrough) heading = `If the canary was running, ${who} can:`;
+		summaryBox.appendChild(element("p", heading));
+		const list = element("ul");
+		TESTS.forEach((test) => {
+			const row = results[test.key];
+			const pending = HOSTS.some((target) => row[target.key] === "pending");
+			const item = element("li");
+			if (pending && !HOSTS.some((target) => isThrough(row[target.key]))) {
+				item.appendChild(element("span", "...", "verdict"));
+				item.appendChild(document.createTextNode(` ${CAPABILITY[test.key]}`));
+			} else {
+				const v = verdict(test, row);
+				item.appendChild(element("span", v.word, "verdict"));
+				item.appendChild(document.createTextNode(` ${CAPABILITY[test.key]} (${v.detail})`));
+			}
+			list.appendChild(item);
+		});
+		summaryBox.appendChild(list);
+
+		if (finished) {
+			const throughWithoutAnswer = state === "prompt" && allKinds.some(isThrough);
+			const lines = {
+				granted: "You allowed this site to reach local servers. A website you have not allowed would have to ask first for most of these, but in the dated Chrome runs the form POST got through without asking (see the matrix). Revoke the permission (section 4) and run again to see what such a website can do here.",
+				denied: "You blocked this site. That answer applies to this site only: another website gets its own prompt.",
+				prompt: throughWithoutAnswer
+					? "Your browser has not recorded an answer for this site, yet let the YES requests through without one."
+					: "Your browser has not recorded an answer for this site. If it is still asking, answer and click Run again."
+			};
+			summaryBox.appendChild(element("p", lines[state] || "Your browser does not report a local network permission, so these results apply to any website you visit, unless your browser asked you and you allowed it."));
+		}
+
+		const table = element("table", undefined, "grid");
+		const head = element("tr");
+		head.appendChild(element("th", "Request type"));
+		HOSTS.forEach((target) => { head.appendChild(element("th", target.host)); });
+		const thead = element("thead");
+		thead.appendChild(head);
+		table.appendChild(thead);
+		const body = element("tbody");
+		TESTS.forEach((test) => {
+			const tr = element("tr");
+			const th = element("th", test.label);
+			th.scope = "row";
+			tr.appendChild(th);
+			HOSTS.forEach((target) => {
+				const kind = results[test.key][target.key];
+				tr.appendChild(element("td", cellLabel(test.key, kind), `k-${kind}`));
+			});
+			body.appendChild(tr);
+		});
+		table.appendChild(body);
+		summaryBox.appendChild(table);
+
+		summaryBox.appendChild(element("p", "Red cells got through: readable means the page read the reply, reached means the server answered but the reply was hidden. Green cells were blocked by the browser, or nothing was listening. Grey cells are unclear: the browser kept the request waiting, or no signal came back. These results describe your browser. The canary answers every website on purpose; your own servers may still refuse. Check them in section 3, or with localprobe scan.", "note"));
+	}
+
 	async function runAll() {
 		runId = newRunId();
 		out.textContent = "";
@@ -302,31 +455,45 @@ node src/cli.ts canary</pre>
 		});
 		line("");
 		line("results:");
+		const results = {};
+		TESTS.forEach((test) => {
+			results[test.key] = {};
+			HOSTS.forEach((target) => { results[test.key][target.key] = "pending"; });
+		});
+		renderSummary(results, null);
 		for (let t = 0; t < TESTS.length; t++) {
 			for (let h = 0; h < HOSTS.length; h++) {
 				const test = TESTS[t];
 				const target = HOSTS[h];
 				const id = `${test.key}-${target.key}`;
-				const result = await test.run(test, target);
-				line(`  ${id.padEnd(16)} ${test.label.padEnd(19)} ${originOf(target).padEnd(24)} ${result}`);
+				const outcome = await test.run(test, target);
+				results[test.key][target.key] = outcome.kind;
+				line(`  ${id.padEnd(16)} ${test.label.padEnd(19)} ${originOf(target).padEnd(24)} ${outcome.text}`);
 				const states = await permissionStates();
 				if (states !== lastStates) {
 					line(`  permissions now: ${states}`);
 					lastStates = states;
 				}
+				renderSummary(results, null);
 			}
 		}
 		line("");
-		line(`permissions after: ${await permissionStates()}`);
+		const permissionsAfter = await permissionStates();
+		line(`permissions after: ${permissionsAfter}`);
 		line(`done ${new Date().toISOString()}`);
+		renderSummary(results, permissionsAfter);
 	}
 
 	runButton.addEventListener("click", () => {
 		runButton.disabled = true;
 		copyButton.disabled = true;
 		popup = window.open("about:blank", "_blank", "popup,width=420,height=320");
-		runAll().catch((error) => {
+		statusLine.textContent = "Running.";
+		runAll().then(() => {
+			statusLine.textContent = "Run finished.";
+		}, (error) => {
 			line(`run stopped: ${errorText(error)}`);
+			statusLine.textContent = `Run stopped: ${errorText(error)}. The results below are incomplete.`;
 		}).finally(() => {
 			try { if (popup) popup.close(); } catch (_e) {}
 			popup = null;
@@ -338,7 +505,7 @@ node src/cli.ts canary</pre>
 	copyButton.addEventListener("click", () => {
 		navigator.clipboard.writeText(out.textContent).then(() => {
 			copyButton.textContent = "Copied";
-			setTimeout(() => { copyButton.textContent = "Copy output"; }, 1500);
+			setTimeout(() => { copyButton.textContent = "Copy details"; }, 1500);
 		}, () => {
 			copyButton.textContent = "Copy failed; select the text instead";
 		});

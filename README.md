@@ -37,6 +37,6 @@ Start the canary, a throwaway listener on port 47823 that logs each request, hol
 node src/cli.ts canary
 ```
 
-Then open <https://orlenko.github.io/localprobe/> and click Run. Paste the page output next to the canary log. The run ID in each request path lines them up.
+Then open <https://orlenko.github.io/localprobe/> and click Run. Open "Details for pasting" on the page and paste it next to the canary log. The run ID in each request path lines them up.
 
 Measured results, with dates and browser versions, are in [docs/matrix.md](docs/matrix.md). The design is in [docs/design.md](docs/design.md).
